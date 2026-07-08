@@ -209,10 +209,93 @@ class Crit:
 
     def get_ccp(self):
         return self.dataframes[3]
+        
+        
+    def get_bcp_properties(self):
+        """
+        Return the BCP DataFrame including additional QTAIM descriptors.
+        """
+        
+        bcp = self.get_bcp()
+        
+        if bcp is None:
+            return None
+        
+        bcp = bcp.copy()
+        
+        # -------- H total energy --------
+        h = bcp["G"] + bcp["virial"]
+        idx = bcp.columns.get_loc("virial") + 1
+        bcp.insert(idx, "H", h)
+        
+        # -------- Ratios virial/rho, H/rho and |virial| /G --------
+        idx = bcp.columns.get_loc("G/rho") + 1
+        
+        bcp.insert(
+            idx,
+            "virial/rho",
+            bcp["virial"] / bcp["density"]
+        )
+        
+        bcp.insert(
+            idx + 1,
+            "H/rho",
+            bcp["H"] / bcp["density"]
+        )
+        
+        bcp.insert(
+            idx + 2,
+            "virial/G",
+            bcp["virial"].abs() / bcp["G"]
+        )
+        
+        return bcp
+
+
+    def get_noncovalent_bcp(self, rho_max=0.10, vg_max=2.0):
+        """
+        Return only non-covalent bond critical points.
+    
+        Criteria:
+            density < rho_max
+            |V|/G < vg_max
+        """
+    
+        bcp = self.get_bcp_properties()
+    
+        if bcp is None:
+            return None
+    
+        return bcp[
+            (bcp["density"] < rho_max) &
+            (bcp["virial/G"] < vg_max)
+        ].reset_index(drop=True)
+
+    def get_covalent_bcp(self, rho_max=0.10, vg_max=2.0):
+        """
+        Return only covalent bond critical points.
+    
+        Criteria:
+            density >= rho_max
+            |V|/G >= vg_max
+        """
+    
+        bcp = self.get_bcp_properties()
+    
+        if bcp is None:
+            return None
+    
+        return bcp[
+            (bcp["density"] >= rho_max) |
+            (bcp["virial/G"] >= vg_max)
+        ].reset_index(drop=True)
 
 # Example usage for displaying critical points data:
 # from gpuampy.io_tools import Crit
-# gpuam_data = Crit("moleculeCrit.log")
-# gpuam_data.read_data()
-# gpuam_data.get_bcp()
+
+#gpuam_data = Crit("moleculeCrit.log")
+#gpuam_data.read_data()
+#bcp_data = gpuam_data.get_bcp()
+#Obtener los no covalentes
+#bcp_data = gpuam_data.get_noncovalent_bcp()
 
