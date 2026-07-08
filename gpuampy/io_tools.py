@@ -5,6 +5,23 @@ Tools for working with GPUAM Crit Calculations.
 """
 import pandas as pd
 import sys
+
+class GPUAMdf(pd.DataFrame):
+
+    @property
+    def _constructor(self):
+        return GPUAMdf
+
+    def save_csv(self, filename, encoding="utf-8-sig"):
+        self.to_csv(
+            filename,
+            index=False,
+            encoding=encoding
+        )
+
+
+
+
 class Crit:
     """
     Class for recovering and storing data from a GPUAM Crit calculation.
@@ -210,7 +227,6 @@ class Crit:
     def get_ccp(self):
         return self.dataframes[3]
         
-        
     def get_bcp_properties(self):
         """
         Return the BCP DataFrame including additional QTAIM descriptors.
@@ -251,33 +267,21 @@ class Crit:
         
         return bcp
 
-
-    def get_noncovalent_bcp(self, rho_max=0.10, vg_max=2.0):
-        """
-        Return only non-covalent bond critical points.
-    
-        Criteria:
-            density < rho_max
-            |V|/G < vg_max
-        """
-    
-        bcp = self.get_bcp_properties()
-    
-        if bcp is None:
-            return None
-    
-        return bcp[
-            (bcp["density"] < rho_max) &
-            (bcp["virial/G"] < vg_max)
-        ].reset_index(drop=True)
-
-    def get_covalent_bcp(self, rho_max=0.10, vg_max=2.0):
+    def _get_covalent_bcp(self, rho_max=0.10, vg_max=2.0):
         """
         Return only covalent bond critical points.
     
-        Criteria:
-            density >= rho_max
-            |V|/G >= vg_max
+        Parameters
+        ----------
+        rho_max : float, optional
+            Electron density threshold for covalent interactions.
+        vg_max : float, optional
+            |V|/G threshold for covalent interactions.
+    
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame containing only covalent bond critical points.
         """
     
         bcp = self.get_bcp_properties()
@@ -285,11 +289,244 @@ class Crit:
         if bcp is None:
             return None
     
-        return bcp[
+        covalent = (
             (bcp["density"] >= rho_max) |
             (bcp["virial/G"] >= vg_max)
-        ].reset_index(drop=True)
+        )
+    
+        return bcp[covalent].reset_index(drop=True)
+        
+        
+    def h_donor(self):
+        """
+        Return the atom bonded to each hydrogen atom from covalent BCPs.
+    
+        Returns
+        -------
+        dict
+            Dictionary where hydrogen atom IDs are keys and values are
+            tuples containing the bonded atom ID and atom type.
+    
+            Example:
+            {
+                64: (63, "C"),
+                21: (20, "N")
+            }
+        """
+    
+        bonds = self._get_covalent_bcp()
+    
+        if bonds is None:
+            return None
+    
+        h_donors = {}
+    
+        for _, row in bonds.iterrows():
+    
+            atom1_id = row["atom1_id"]
+            atom1_type = row["atom1_type"]
+    
+            atom2_id = row["atom2_id"]
+            atom2_type = row["atom2_type"]
+    
+            if atom1_type == "H":
+                h_donors[atom1_id] = (
+                    atom2_id,
+                    atom2_type
+                )
+    
+            elif atom2_type == "H":
+                h_donors[atom2_id] = (
+                    atom1_id,
+                    atom1_type
+                )
+    
+        return h_donors
+        
+        
+    def _get_interaction_type(
+        self,
+        atom1_type,
+        atom2_type,
+        atom1_id,
+        atom2_id,
+        covalent,
+        h_donors
+    ):
+        """
+        Classify the chemical type of a BCP interaction.
+    
+        Returns
+        -------
+        str
+            Contact classification.
+        """
+    
+        # Covalent interaction
+        if covalent:
+            return "Covalent"
+    
+        # No hydrogen involved: heavy atom interaction
+        if atom1_type != "H" and atom2_type != "H":
+            return "Lewis int"
+    
+        # H...H interactions
+        if atom1_type == "H" and atom2_type == "H":
+    
+            if atom1_id in h_donors and atom2_id in h_donors:
+    
+                _, donor1 = h_donors[atom1_id]
+                _, donor2 = h_donors[atom2_id]
+    
+                if donor1 == donor2:
+                    return "Dihydrogen bond"
+    
+                else:
+                    return "H-H bond"
+    
+            return "H-H interaction"
+    
+        # H...X interactions
+        if atom1_type == "H" and atom1_id in h_donors:
+    
+            _, donor_type = h_donors[atom1_id]
+    
+            if donor_type in ("N", "O", "S"):
+                return "H bond"
+    
+            elif donor_type == "C":
+                return "Nonconv H bond"
+    
+    
+        if atom2_type == "H" and atom2_id in h_donors:
+    
+            _, donor_type = h_donors[atom2_id]
+    
+            if donor_type in ("N", "O", "S"):
+                return "H bond"
+    
+            elif donor_type == "C":
+                return "Nonconv H bond"
+    
+    
+        return "H interaction"
 
+    def get_interaction_bcp(self, interaction="all"):
+        """
+        Return bond critical points with interaction labels.
+    
+        Parameters
+        ----------
+        interaction : {"all", "covalent", "noncovalent"}, default="all"
+            Type of interactions to return.
+    
+        Returns
+        -------
+        pandas.DataFrame
+            Bond critical points with ``interaction`` and ``interaction_type`` columns.
+        """
+    
+        bcp = self.get_bcp_properties()
+    
+        if bcp is None:
+            return None
+    
+        bcp = bcp.copy()
+    
+        covalent_bcp = self._get_covalent_bcp()
+    
+        if covalent_bcp is None:
+            return None
+    
+        # Identify covalent rows
+        covalent_ids = set(covalent_bcp["id"])
+        is_covalent = bcp["id"].isin(covalent_ids)
+    
+        h_donors = None
+    
+        if interaction in ("all", "noncovalent"):
+            h_donors = self.h_donor()
+    
+        interaction_labels = []
+        interaction_types = []
+    
+        for _, row in bcp.iterrows():
+    
+            atom1_id = row["atom1_id"]
+            atom1_type = row["atom1_type"]
+    
+            atom2_id = row["atom2_id"]
+            atom2_type = row["atom2_type"]
+    
+            cov = is_covalent.loc[row.name]
+    
+            # Generate interaction label
+            if cov:
+    
+                label = f"{atom1_type}\u2014{atom2_type}"
+    
+            else:
+    
+                left = atom1_type
+                right = atom2_type
+    
+                if h_donors is not None:
+    
+                    if atom1_type == "H" and atom1_id in h_donors:
+                        _, donor_type = h_donors[atom1_id]
+                        left = f"{donor_type}\u2014H"
+    
+                    if atom2_type == "H" and atom2_id in h_donors:
+                        _, donor_type = h_donors[atom2_id]
+                        right = f"H\u2014{donor_type}"
+    
+                label = f"{left}\u00b7\u00b7\u00b7{right}"
+    
+            interaction_labels.append(label)
+    
+            # Classify interaction type
+            interaction_types.append(
+                self._get_interaction_type(
+                    atom1_type,
+                    atom2_type,
+                    atom1_id,
+                    atom2_id,
+                    cov,
+                    h_donors
+                )
+            )
+    
+        # Insert columns after atom2_type
+        position = bcp.columns.get_loc("atom2_type") + 1
+    
+        bcp.insert(position, "interaction", interaction_labels)
+        bcp.insert(position + 1, "interaction_type", interaction_types)
+    
+        # Return selected interactions
+        if interaction == "all":
+    
+            return GPUAMdf(
+                bcp.reset_index(drop=True)
+            )
+    
+        elif interaction == "covalent":
+    
+            return GPUAMdf(
+                bcp[is_covalent].reset_index(drop=True)
+            )
+    
+        elif interaction == "noncovalent":
+    
+            return GPUAMdf(
+                bcp[~is_covalent].reset_index(drop=True)
+            )
+    
+        else:
+            raise ValueError(
+                "interaction must be one of {'all', 'covalent', 'noncovalent'}."
+            )
+            
+        
 # Example usage for displaying critical points data:
 # from gpuampy.io_tools import Crit
 
@@ -297,5 +534,5 @@ class Crit:
 #gpuam_data.read_data()
 #bcp_data = gpuam_data.get_bcp()
 #Obtener los no covalentes
-#bcp_data = gpuam_data.get_noncovalent_bcp()
+#bcp_data = gpuam_data.get_interaction_bcp(interaction="all")
 

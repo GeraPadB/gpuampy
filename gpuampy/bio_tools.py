@@ -269,7 +269,7 @@ class Biomol:
             else:
                 interaction_type.append("intermolecular")
         
-        idx = df.columns.get_loc("atom2_chain") + 1
+        idx = df.columns.get_loc("interaction_type") + 1
         
         df.insert(idx, "interaction_cat", interaction_type)
         df.insert(idx + 1, "bio_interaction", bio_interaction)

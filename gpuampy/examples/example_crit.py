@@ -11,5 +11,5 @@ bcp_data = gpuam_data.get_bcp()
 
 # === Get the noncovalent critical points ===
 bcp_data = gpuam_data.get_noncovalent_bcp()
-bcp_data.to_csv("archivo.csv", index=False)
+bcp_data.save_csv("crit_df.csv")
 

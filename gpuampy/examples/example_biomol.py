@@ -11,8 +11,11 @@ gpuam_data.read_data()
 bcp_data = gpuam_data.get_bcp()
 
 # === Get the noncovalent critical points ===
-bcp_data = gpuam_data.get_noncovalent_bcp()
-bcp_data.to_csv("archivo.csv", index=False)
+bcp_data = gpuam_data.get_interaction_bcp(interaction="all")
+#print(bcp_data)
+bcp_data.save_csv("crit_df.csv")
+
+
 
 # === GPUAMPy Bio ===
 
@@ -22,7 +25,6 @@ bio_data = Biomol("PDB_molecule.pdb")
 # === Add PDB info ===
 
 bcp_data = bio_data.biomol_info(bcp_data, interaction_cat="intermolecular")
-print(bcp_data)
-
-bcp_data.to_csv("df.csv", index=False)
+#print(bcp_data)
+bcp_data.save_csv("bio_df.csv")
 
